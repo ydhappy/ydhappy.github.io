@@ -322,20 +322,27 @@ function queueLocalTranslation(texts) {
     let translator;
     try {
       translator = await getKoreanTranslationPipeline();
-      const output = await translator(texts, { max_new_tokens: 160 });
-      if (!Array.isArray(output) || output.length !== texts.length) {
-        throw new Error("한국어 자동 번역 결과를 확인할 수 없습니다.");
-      }
-      return output.map((item) => {
-        if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
-          throw new Error("한국어 자동 번역 결과가 비어 있습니다.");
-        }
-        return item.translation_text.trim();
-      });
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("한국어 자동 번역 결과")) throw error;
-      throw new Error("한국어 번역 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.");
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`한국어 번역 모델을 불러오지 못했습니다: ${reason}`);
     }
+
+    let output;
+    try {
+      output = await translator(texts, { max_new_tokens: 160 });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`한국어 번역 모델 실행에 실패했습니다: ${reason}`);
+    }
+    if (!Array.isArray(output) || output.length !== texts.length) {
+      throw new Error("한국어 자동 번역 결과의 개수가 입력과 일치하지 않습니다.");
+    }
+    return output.map((item) => {
+      if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
+        throw new Error("한국어 자동 번역 결과가 비어 있습니다.");
+      }
+      return item.translation_text.trim();
+    });
   });
   translationQueue = result.catch(() => []);
   return result;
