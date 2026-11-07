@@ -26,7 +26,10 @@ let savingsRequestController;
 let activeSavingsQuery = '"context compression"';
 const readmeSummaries = new Map();
 const repositoryFiles = new Map();
+const descriptionTranslations = new Map();
 let translationPipelinePromise;
+let translationQueue = Promise.resolve();
+let descriptionObserver;
 
 const numberFormat = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "short", day: "numeric" });
@@ -73,7 +76,11 @@ const summaryLabels = {
     loading: "README에서 개요·기능·사용 방법을 확인하고 있습니다.",
     translating: "오픈소스 한국어 번역 모델을 준비하고 있습니다. 첫 사용 시 모델을 다운로드합니다.",
     translated: "영어로 작성된 요약 항목을 오픈소스 MarianMT 모델로 한국어 자동 번역했습니다.",
-    translationError: "한국어 자동 번역에 실패했습니다. 아래는 영어 원문 요약입니다. English를 누르거나 다시 시도할 수 있습니다."
+    translationError: "한국어 자동 번역에 실패했습니다. 아래는 영어 원문 요약입니다. English를 누르거나 다시 시도할 수 있습니다.",
+    descriptionTranslating: "한국어로 번역 중…",
+    descriptionTranslate: "한국어 번역 보기",
+    descriptionOriginal: "English 원문",
+    descriptionRetry: "한국어 번역 다시 시도"
   },
   en: {
     description: "Repository description",
@@ -84,7 +91,11 @@ const summaryLabels = {
     loading: "Reading the README overview, features, and usage.",
     translating: "Preparing the open-source Korean translation model. The model downloads on first use.",
     translated: "English summary sections were auto-translated to Korean with an open-source MarianMT model.",
-    translationError: "Korean translation failed. The English source summary is shown below. Switch to English or retry."
+    translationError: "Korean translation failed. The English source summary is shown below. Switch to English or retry.",
+    descriptionTranslating: "Translating to Korean…",
+    descriptionTranslate: "한국어 번역",
+    descriptionOriginal: "English original",
+    descriptionRetry: "Retry Korean translation"
   }
 };
 
@@ -289,32 +300,118 @@ async function translateSummaryToKorean(summary) {
   }
   if (!pendingTranslations.length) return { ...summary, fallback: false, translated: false };
 
-  let translated;
-  try {
-    const translator = await getKoreanTranslationPipeline();
-    translated = await translator(pendingTranslations.map((item) => item.text), {
-      max_new_tokens: 160
-    });
-  } catch {
-    throw new Error("한국어 번역 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.");
-  }
-  if (!Array.isArray(translated) || translated.length !== pendingTranslations.length) {
-    throw new Error("한국어 자동 번역 결과를 확인할 수 없습니다. 다시 시도해 주세요.");
-  }
+  const translated = await queueLocalTranslation(pendingTranslations.map((item) => item.text));
 
   const sections = summary.sections.map((section) => ({ ...section }));
-  translated.forEach((item, index) => {
-    if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
-      throw new Error("한국어 자동 번역 결과가 비어 있습니다. 다시 시도해 주세요.");
-    }
+  translated.forEach((translatedText, index) => {
     const target = pendingTranslations[index];
-    const translatedText = item.translation_text.trim();
     if (target.field === "text" && detectTextLanguage(translatedText) !== "ko") {
       throw new Error("일부 요약 항목이 한국어로 번역되지 않았습니다. 다시 시도해 주세요.");
     }
     sections[target.sectionIndex][target.field] = translatedText;
   });
   return { ...summary, sections, fallback: false, translated: true, translatedCount: pendingTranslations.length };
+}
+
+function queueLocalTranslation(texts) {
+  const result = translationQueue.then(async () => {
+    let translator;
+    try {
+      translator = await getKoreanTranslationPipeline();
+      const output = await translator(texts, { max_new_tokens: 160 });
+      if (!Array.isArray(output) || output.length !== texts.length) {
+        throw new Error("한국어 자동 번역 결과를 확인할 수 없습니다.");
+      }
+      return output.map((item) => {
+        if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
+          throw new Error("한국어 자동 번역 결과가 비어 있습니다.");
+        }
+        return item.translation_text.trim();
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("한국어 자동 번역 결과")) throw error;
+      throw new Error("한국어 번역 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.");
+    }
+  });
+  translationQueue = result.catch(() => []);
+  return result;
+}
+
+function getDescriptionTranslationKey(repository, text) {
+  const fullName = repository.full_name || `${repository.owner.login}/${repository.name}`;
+  return `${fullName}:${text}`;
+}
+
+function observeRepositoryDescription(repository, description, button) {
+  description._repository = repository;
+  description._translationButton = button;
+  if (typeof IntersectionObserver !== "function") return;
+  descriptionObserver ||= new IntersectionObserver((entries) => {
+    const visibleEntries = entries.filter((entry) => entry.isIntersecting);
+    visibleEntries.forEach((entry) => descriptionObserver.unobserve(entry.target));
+    translateVisibleDescriptions(visibleEntries.map((entry) => entry.target));
+  }, { rootMargin: "160px 0px" });
+  descriptionObserver.observe(description);
+}
+
+async function translateVisibleDescriptions(descriptions) {
+  const pending = descriptions.filter((description) => (
+    description.dataset.translated !== "true" && description.dataset.translating !== "true"
+  ));
+  if (!pending.length) return;
+
+  pending.forEach((description) => {
+    description.dataset.translating = "true";
+    description._translationButton.disabled = true;
+    description._translationButton.textContent = summaryLabels.ko.descriptionTranslating;
+  });
+
+  try {
+    const newDescriptions = pending.filter((description) => (
+      !descriptionTranslations.has(getDescriptionTranslationKey(description._repository, description.dataset.sourceText))
+    ));
+    if (newDescriptions.length) {
+      const batch = queueLocalTranslation(newDescriptions.map((description) => description.dataset.sourceText));
+      newDescriptions.forEach((description, index) => {
+        const key = getDescriptionTranslationKey(description._repository, description.dataset.sourceText);
+        const translation = batch.then((translations) => {
+          const translated = translations[index];
+          if (detectTextLanguage(translated) !== "ko") {
+            throw new Error("저장소 설명이 한국어로 번역되지 않았습니다.");
+          }
+          return translated;
+        });
+        descriptionTranslations.set(key, translation);
+        translation.catch(() => descriptionTranslations.delete(key));
+      });
+    }
+
+    const results = await Promise.all(pending.map((description) => {
+      const sourceText = description.dataset.sourceText;
+      const key = getDescriptionTranslationKey(description._repository, sourceText);
+      return descriptionTranslations.get(key);
+    }));
+
+    pending.forEach((description, index) => {
+      description.dataset.translatedText = results[index];
+      description.dataset.translated = "true";
+      description.dataset.showingTranslation = "true";
+      description.textContent = results[index];
+      description._translationButton.disabled = false;
+      description._translationButton.textContent = summaryLabels.ko.descriptionOriginal;
+      description._translationButton.setAttribute("aria-label", "영어 원문 보기");
+    });
+  } catch {
+    pending.forEach((description) => {
+      description._translationButton.disabled = false;
+      description._translationButton.textContent = summaryLabels.ko.descriptionRetry;
+      description._translationButton.setAttribute("aria-label", "한국어 번역 다시 시도");
+    });
+  } finally {
+    pending.forEach((description) => {
+      delete description.dataset.translating;
+    });
+  }
 }
 
 function renderRepositorySummary(summary, language, notice, sectionsContainer) {
@@ -425,7 +522,36 @@ function createRepositoryCard(repository, index) {
   link.rel = "noreferrer";
   title.append(link);
 
-  const description = makeElement("p", "repo-description", repository.description || "저장소 설명이 아직 등록되지 않았습니다.");
+  const sourceDescription = repository.description || "저장소 설명이 아직 등록되지 않았습니다.";
+  const descriptionBlock = makeElement("div", "repo-description-block");
+  const description = makeElement("p", "repo-description", sourceDescription);
+  const descriptionLanguage = detectTextLanguage(sourceDescription);
+  const descriptionButton = descriptionLanguage === "en"
+    ? makeElement("button", "repo-description-translate", summaryLabels.ko.descriptionTranslate)
+    : null;
+  if (descriptionButton) {
+    description.dataset.sourceText = sourceDescription;
+    descriptionButton.type = "button";
+    descriptionButton.setAttribute("aria-label", "한국어 번역");
+    descriptionButton.addEventListener("click", () => {
+      if (description.dataset.translated === "true") {
+        const showingTranslation = description.dataset.showingTranslation === "true";
+        description.textContent = showingTranslation ? description.dataset.sourceText : description.dataset.translatedText;
+        description.dataset.showingTranslation = String(!showingTranslation);
+        descriptionButton.textContent = showingTranslation
+          ? summaryLabels.ko.descriptionTranslate
+          : summaryLabels.ko.descriptionOriginal;
+        descriptionButton.setAttribute(
+          "aria-label",
+          showingTranslation ? "한국어 번역 보기" : "영어 원문 보기"
+        );
+        return;
+      }
+      translateVisibleDescriptions([description]);
+    });
+  }
+  descriptionBlock.append(description);
+  if (descriptionButton) descriptionBlock.append(descriptionButton);
   const coreSummary = makeElement("div", "repo-core-summary");
   const summaryButton = makeElement("button", "repo-summary-toggle", "핵심 내용 보기 / Summary +");
   summaryButton.type = "button";
@@ -473,7 +599,8 @@ function createRepositoryCard(repository, index) {
   openLink.rel = "noreferrer";
   footer.append(forks, openLink);
 
-  card.append(top, category, title, description, coreSummary, details, footer);
+  card.append(top, category, title, descriptionBlock, coreSummary, details, footer);
+  if (descriptionButton) observeRepositoryDescription(repository, description, descriptionButton);
   return card;
 }
 
