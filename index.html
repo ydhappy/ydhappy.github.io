@@ -114,6 +114,33 @@
         <p class="savings-disclaimer">별 수와 검색 결과는 GitHub에서 조회합니다. 실제 절감률은 모델·설정·사용 방식에 따라 달라집니다.</p>
       </section>
 
+      <section class="media-section" aria-labelledby="media-title">
+        <div class="media-heading">
+          <div>
+            <p class="eyebrow">OPEN SOURCE CREATIVE AI</p>
+            <h2 id="media-title">음악을 영상으로 만드는 AI 도구</h2>
+            <p class="media-description">이미지·영상 생성, 이미지 애니메이션, 음악 시각화와 쇼츠 편집에 활용할 수 있는 오픈소스 프로젝트를 별 순으로 찾아봅니다.</p>
+          </div>
+          <span class="media-mark" aria-hidden="true">▶<br>AI</span>
+        </div>
+
+        <div class="media-categories" role="group" aria-label="오픈소스 생성형 미디어 도구 유형">
+          <button class="media-chip is-active" type="button" data-query='"image generation"' data-description="Stable Diffusion 등 오픈소스 이미지 생성 모델과 도구입니다." aria-pressed="true">이미지 생성</button>
+          <button class="media-chip" type="button" data-query='"video generation"' data-description="텍스트나 프롬프트로 영상을 생성하는 오픈소스 모델과 프로젝트입니다." aria-pressed="false">영상 생성</button>
+          <button class="media-chip" type="button" data-query='"image to video"' data-description="이미지 한 장을 움직이는 영상으로 변환하는 프로젝트입니다." aria-pressed="false">이미지 애니메이션</button>
+          <button class="media-chip" type="button" data-query='"music visualizer"' data-description="음악의 박자와 소리에 반응하는 비주얼라이저 및 뮤직비디오 제작 도구입니다." aria-pressed="false">음악 시각화</button>
+          <button class="media-chip" type="button" data-query='"short video editor"' data-description="세로형 짧은 영상과 쇼츠 편집을 자동화하거나 지원하는 도구입니다." aria-pressed="false">쇼츠 편집</button>
+        </div>
+
+        <p class="media-note" id="media-note" aria-live="polite">이미지 생성 오픈소스 도구를 불러오는 중입니다...</p>
+        <div class="repo-grid media-grid" id="media-grid" aria-live="polite" aria-busy="true"></div>
+        <div class="media-actions">
+          <p id="media-summary">별이 많은 저장소부터 보여드립니다.</p>
+          <button class="load-more" id="media-load-more" type="button" hidden>더 불러오기 <span aria-hidden="true">↓</span></button>
+        </div>
+        <p class="media-disclaimer">GitHub 공개 저장소를 별 순으로 표시합니다. 상업적 이용 여부, 모델 가중치 라이선스, GPU 요구 사항은 각 프로젝트의 라이선스와 문서를 확인하세요.</p>
+      </section>
+
       <section class="about-strip">
         <span class="about-star" aria-hidden="true">✳</span>
         <p>오픈소스는 함께 만들어가는 아이디어입니다.<br><span>오늘의 별 하나가 다음 발견으로 이어지길.</span></p>

@@ -14,6 +14,11 @@ const savingsNote = document.querySelector("#savings-note");
 const savingsSummary = document.querySelector("#savings-summary");
 const savingsCategories = document.querySelector(".savings-categories");
 const savingsLoadMoreButton = document.querySelector("#savings-load-more");
+const mediaGrid = document.querySelector("#media-grid");
+const mediaNote = document.querySelector("#media-note");
+const mediaSummary = document.querySelector("#media-summary");
+const mediaCategories = document.querySelector(".media-categories");
+const mediaLoadMoreButton = document.querySelector("#media-load-more");
 
 let activeLanguage = "";
 let searchTerm = "";
@@ -24,6 +29,10 @@ let savingsPage = 1;
 let savingsTotalCount = 0;
 let savingsRequestController;
 let activeSavingsQuery = '"context compression"';
+let mediaPage = 1;
+let mediaTotalCount = 0;
+let mediaRequestController;
+let activeMediaQuery = '"image generation"';
 const readmeSummaries = new Map();
 const repositoryFiles = new Map();
 const descriptionTranslations = new Map();
@@ -55,6 +64,10 @@ function getRepositoryType(repository) {
   const hasTopic = (...values) => values.some((value) => topics.includes(value));
 
   if (/\b(prompt|context|token)[ -]?(compression|optimization|optimisation)|\b(prompt cache|llm cost|cost tracking)\b/.test(text)) return "토큰·비용 최적화";
+  if (hasTopic("music-visualizer", "audio-visualizer") || /\b(music visuali[sz]er|audio visuali[sz]er)\b/.test(text)) return "음악 시각화";
+  if (hasTopic("text-to-video", "video-generation") || /\b(text.to.video|video generation|video diffusion|image.to.video)\b/.test(text)) return "AI 영상 생성";
+  if (hasTopic("image-generation", "text-to-image", "stable-diffusion") || /\b(image generation|text.to.image|stable diffusion)\b/.test(text)) return "AI 이미지 생성";
+  if (/\b(shorts editor|short.video editor|vertical video)\b/.test(text)) return "쇼츠 편집";
   if (hasTopic("coding-agent", "ai-coding-agent") || /\b(coding agent|code agent)\b/.test(text)) return "코딩 에이전트";
   if (hasTopic("ai-agent", "agents", "agentic-ai") || /\b(ai agent|agentic|autonomous agent|multi-agent|mcp server)\b/.test(text)) return "AI 에이전트";
   if (hasTopic("machine-learning", "deep-learning", "llm") || /\b(machine learning|deep learning|large language model|llm|inference)\b/.test(text)) return "AI·ML";
@@ -787,6 +800,90 @@ async function loadSavingsRepositories({ append = false } = {}) {
   }
 }
 
+async function loadMediaRepositories({ append = false } = {}) {
+  mediaRequestController?.abort();
+  const controller = new AbortController();
+  mediaRequestController = controller;
+  const requestedPage = append ? mediaPage + 1 : 1;
+  const activeCategory = mediaCategories.querySelector(".is-active");
+  mediaNote.textContent = activeCategory?.dataset.description || "";
+  mediaGrid.setAttribute("aria-busy", "true");
+  mediaLoadMoreButton.disabled = true;
+
+  if (!append) {
+    mediaGrid.replaceChildren();
+    for (let index = 0; index < 3; index += 1) {
+      const skeleton = makeElement("div", "repo-skeleton");
+      skeleton.setAttribute("aria-hidden", "true");
+      mediaGrid.append(skeleton);
+    }
+    mediaSummary.textContent = "저장소를 불러오고 있어요...";
+    mediaLoadMoreButton.hidden = true;
+  }
+
+  const query = [activeMediaQuery, "stars:>0", "fork:false", "archived:false"].join(" ");
+  const params = new URLSearchParams({
+    q: query,
+    sort: "stars",
+    order: "desc",
+    per_page: "12",
+    page: String(requestedPage)
+  });
+
+  try {
+    const response = await fetch(`${API_URL}?${params}`, {
+      headers: { Accept: "application/vnd.github+json" },
+      signal: controller.signal
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(errorMessage(response, payload));
+
+    const items = payload.items || [];
+    mediaPage = requestedPage;
+    mediaTotalCount = payload.total_count || 0;
+    const startIndex = (requestedPage - 1) * 12;
+    const cards = items.map((repository, index) => {
+      const card = createRepositoryCard(repository, startIndex + index);
+      card.classList.add("media-card");
+      return card;
+    });
+
+    if (append) mediaGrid.append(...cards);
+    else mediaGrid.replaceChildren(...cards);
+
+    const shownCount = mediaGrid.querySelectorAll(".repo-card").length;
+    mediaSummary.textContent = mediaTotalCount
+      ? `${numberFormat.format(mediaTotalCount)}개 이상의 검색 결과 · ${shownCount}개 표시 중`
+      : "검색 결과가 없습니다. 다른 분류를 선택해 보세요.";
+    mediaLoadMoreButton.hidden = items.length < 12 || shownCount >= mediaTotalCount || requestedPage >= 10;
+    if (requestedPage >= 10 && shownCount < mediaTotalCount) {
+      mediaSummary.textContent += " · GitHub 검색 API는 검색당 최대 1,000개까지 제공합니다.";
+    }
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    if (!append) {
+      const errorCard = makeElement("div", "error-card");
+      errorCard.append(
+        makeElement("span", "error-icon", "!"),
+        makeElement("h3", "", "생성형 미디어 저장소를 불러오지 못했어요"),
+        makeElement("p", "", error.message),
+        makeElement("button", "retry-button", "다시 시도")
+      );
+      errorCard.querySelector("button").addEventListener("click", () => loadMediaRepositories());
+      mediaGrid.replaceChildren(errorCard);
+      mediaSummary.textContent = "GitHub 연결을 확인해 주세요.";
+    } else {
+      mediaSummary.textContent = error.message;
+    }
+    mediaLoadMoreButton.hidden = true;
+  } finally {
+    if (!controller.signal.aborted) {
+      mediaGrid.setAttribute("aria-busy", "false");
+      mediaLoadMoreButton.disabled = false;
+    }
+  }
+}
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   searchTerm = searchInput.value;
@@ -818,6 +915,19 @@ savingsCategories.addEventListener("click", (event) => {
   loadSavingsRepositories();
 });
 savingsLoadMoreButton.addEventListener("click", () => loadSavingsRepositories({ append: true }));
+mediaCategories.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-query]");
+  if (!button) return;
+  const activeButton = mediaCategories.querySelector(".is-active");
+  activeButton?.classList.remove("is-active");
+  activeButton?.setAttribute("aria-pressed", "false");
+  button.classList.add("is-active");
+  button.setAttribute("aria-pressed", "true");
+  activeMediaQuery = button.dataset.query;
+  loadMediaRepositories();
+});
+mediaLoadMoreButton.addEventListener("click", () => loadMediaRepositories({ append: true }));
 
 loadRepositories();
 loadSavingsRepositories();
+loadMediaRepositories();
