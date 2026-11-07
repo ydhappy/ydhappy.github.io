@@ -80,7 +80,13 @@ const summaryLabels = {
     descriptionTranslating: "한국어로 번역 중…",
     descriptionTranslate: "한국어 번역 보기",
     descriptionOriginal: "English 원문",
-    descriptionRetry: "한국어 번역 다시 시도"
+    descriptionRetry: "한국어 번역 다시 시도",
+    publicTranslationConsent: "브라우저 번역이 실패했습니다. 아래 버튼을 누르면 공개 README 요약을 LibreTranslate 공개 서버로 전송해 번역합니다.",
+    publicTranslationButton: "공개 오픈소스 번역 사용",
+    publicTranslationLoading: "LibreTranslate 공개 서버에서 번역 중…",
+    publicTranslationDone: "공개 오픈소스 LibreTranslate 서버에서 번역했습니다.",
+    publicTranslationSent: "공개 README 요약을 LibreTranslate 서버에 전송했습니다.",
+    publicTranslationError: "공개 번역 서버를 사용할 수 없습니다."
   },
   en: {
     description: "Repository description",
@@ -95,7 +101,13 @@ const summaryLabels = {
     descriptionTranslating: "Translating to Korean…",
     descriptionTranslate: "한국어 번역",
     descriptionOriginal: "English original",
-    descriptionRetry: "Retry Korean translation"
+    descriptionRetry: "Retry Korean translation",
+    publicTranslationConsent: "Browser translation failed. The button below sends the public README summary to a LibreTranslate public server.",
+    publicTranslationButton: "Use public open-source translation",
+    publicTranslationLoading: "Translating with the public LibreTranslate server…",
+    publicTranslationDone: "Translated by a public LibreTranslate server.",
+    publicTranslationSent: "The public README summary was sent to the LibreTranslate server.",
+    publicTranslationError: "The public translation server is unavailable."
   }
 };
 
@@ -315,6 +327,36 @@ async function translateSummaryToKorean(summary) {
   return { ...summary, sections, fallback: false, translated: true, translatedCount: pendingTranslations.length };
 }
 
+async function translateSummaryWithLibreTranslate(summary) {
+  const sections = [];
+  for (const section of summary.sections) {
+    const translatedSection = { ...section };
+    for (const field of ["label", "text"]) {
+      if (detectTextLanguage(translatedSection[field]) === "ko") continue;
+      const response = await fetch("https://translate.argosopentech.com/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          q: translatedSection[field],
+          source: "en",
+          target: "ko",
+          format: "text"
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      if (typeof payload.translatedText !== "string" || detectTextLanguage(payload.translatedText) !== "ko") {
+        throw new Error("한국어 번역 결과를 확인할 수 없습니다.");
+      }
+      translatedSection[field] = payload.translatedText.trim();
+    }
+    sections.push(translatedSection);
+  }
+  return { ...summary, sections, fallback: false, translated: true, translationProvider: "LibreTranslate" };
+}
+
 function queueLocalTranslation(texts) {
   const result = translationQueue.then(async () => {
     let translator;
@@ -426,7 +468,9 @@ async function translateVisibleDescriptions(descriptions) {
 function renderRepositorySummary(summary, language, notice, sectionsContainer) {
   notice.hidden = !summary.fallback && !summary.translated;
   notice.textContent = summary.translated
-    ? summaryLabels[language].translated
+    ? summary.translationProvider === "LibreTranslate"
+      ? summaryLabels[language].publicTranslationDone
+      : summaryLabels[language].translated
     : summary.fallback ? summaryLabels[language].fallback : "";
   sectionsContainer.replaceChildren();
   if (summary.fallback) {
@@ -474,7 +518,29 @@ async function loadRepositorySummary(repository, button, summaryPanel, notice, s
       const retryButton = makeElement("button", "summary-retry-button", "한국어 번역 다시 시도");
       retryButton.type = "button";
       retryButton.addEventListener("click", () => loadRepositorySummary(repository, button, summaryPanel, notice, sectionsContainer, language));
-      notice.append(document.createElement("br"), retryButton);
+      const publicTranslationButton = makeElement("button", "summary-retry-button", summaryLabels[language].publicTranslationButton);
+      publicTranslationButton.type = "button";
+      publicTranslationButton.addEventListener("click", async () => {
+        publicTranslationButton.disabled = true;
+        notice.textContent = summaryLabels[language].publicTranslationLoading;
+        try {
+          const translatedSummary = await translateSummaryWithLibreTranslate(summary);
+          renderRepositorySummary(translatedSummary, language, notice, sectionsContainer);
+          notice.append(document.createElement("br"), makeElement("span", "", summaryLabels[language].publicTranslationSent));
+        } catch (publicError) {
+          notice.textContent = `${summaryLabels[language].publicTranslationError} (${publicError.message})`;
+          publicTranslationButton.disabled = false;
+          notice.append(document.createElement("br"), publicTranslationButton);
+        }
+      });
+      notice.append(
+        document.createElement("br"),
+        retryButton,
+        document.createElement("br"),
+        makeElement("span", "", summaryLabels[language].publicTranslationConsent),
+        document.createElement("br"),
+        publicTranslationButton
+      );
       button.textContent = "핵심 내용 접기 / Collapse −";
       button.setAttribute("aria-expanded", "true");
     } else {
