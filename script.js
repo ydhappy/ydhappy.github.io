@@ -127,11 +127,7 @@ function shortenText(text, maximum = 320) {
 function detectTextLanguage(text) {
   const hangulCount = (text.match(/[가-힣]/g) || []).length;
   const letterCount = (text.match(/[a-zA-Z가-힣]/g) || []).length;
-  return hangulCount > 0 && hangulCount / Math.max(letterCount, 1) >= 0.05 ? "ko" : "en";
-}
-
-function containsKoreanText(text) {
-  return /[가-힣]/.test(text);
+  return hangulCount > 0 && hangulCount / Math.max(letterCount, 1) >= 0.3 ? "ko" : "en";
 }
 
 function getSectionLabel(heading, language) {
@@ -280,8 +276,10 @@ async function fetchReadmeFile(repository, language) {
 
 async function getKoreanTranslationPipeline() {
   if (!translationPipelinePromise) {
-    translationPipelinePromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/+esm")
+    translationPipelinePromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2")
       .then(({ env, pipeline }) => {
+        env.allowLocalModels = false;
+        env.allowRemoteModels = true;
         env.useBrowserCache = true;
         return pipeline("translation", "Xenova/opus-mt-en-ko", { dtype: "q8" });
       });
@@ -309,7 +307,7 @@ async function translateSummaryToKorean(summary) {
   const sections = summary.sections.map((section) => ({ ...section }));
   translated.forEach((translatedText, index) => {
     const target = pendingTranslations[index];
-    if (target.field === "text" && !containsKoreanText(translatedText)) {
+    if (target.field === "text" && detectTextLanguage(translatedText) !== "ko") {
       throw new Error("일부 요약 항목이 한국어로 번역되지 않았습니다. 다시 시도해 주세요.");
     }
     sections[target.sectionIndex][target.field] = translatedText;
@@ -387,7 +385,7 @@ async function translateVisibleDescriptions(descriptions) {
         const key = getDescriptionTranslationKey(description._repository, description.dataset.sourceText);
         const translation = batch.then((translations) => {
           const translated = translations[index];
-          if (!containsKoreanText(translated)) {
+          if (detectTextLanguage(translated) !== "ko") {
             throw new Error("저장소 설명이 한국어로 번역되지 않았습니다.");
           }
           return translated;
