@@ -27,9 +27,8 @@ let activeSavingsQuery = '"context compression"';
 const readmeSummaries = new Map();
 const repositoryFiles = new Map();
 const descriptionTranslations = new Map();
-let translationPipelinePromise;
-let translationQueue = Promise.resolve();
-let descriptionObserver;
+let browserTranslatorPromise;
+let browserTranslationQueue = Promise.resolve();
 
 const numberFormat = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "short", day: "numeric" });
@@ -74,19 +73,14 @@ const summaryLabels = {
     usage: "사용 방법",
     fallback: "한국어 README가 없어 저장소의 기본 README 원문을 표시합니다.",
     loading: "README에서 개요·기능·사용 방법을 확인하고 있습니다.",
-    translating: "오픈소스 한국어 번역 모델을 준비하고 있습니다. 첫 사용 시 모델을 다운로드합니다.",
-    translated: "영어로 작성된 요약 항목을 오픈소스 MarianMT 모델로 한국어 자동 번역했습니다.",
+    translating: "브라우저 내장 한국어 번역기를 준비하고 있습니다.",
+    translated: "브라우저 내장 번역기로 영어 요약을 한국어로 번역했습니다.",
     translationError: "한국어 자동 번역에 실패했습니다. 아래는 영어 원문 요약입니다. English를 누르거나 다시 시도할 수 있습니다.",
     descriptionTranslating: "한국어로 번역 중…",
     descriptionTranslate: "한국어 번역 보기",
     descriptionOriginal: "English 원문",
     descriptionRetry: "한국어 번역 다시 시도",
-    publicTranslationConsent: "브라우저 번역이 실패했습니다. 아래 버튼을 누르면 공개 README 요약을 LibreTranslate 공개 서버로 전송해 번역합니다.",
-    publicTranslationButton: "공개 오픈소스 번역 사용",
-    publicTranslationLoading: "LibreTranslate 공개 서버에서 번역 중…",
-    publicTranslationDone: "공개 오픈소스 LibreTranslate 서버에서 번역했습니다.",
-    publicTranslationSent: "공개 README 요약을 LibreTranslate 서버에 전송했습니다.",
-    publicTranslationError: "공개 번역 서버를 사용할 수 없습니다."
+    browserUnavailable: "이 브라우저는 내장 번역 API를 지원하지 않습니다. Chrome 또는 Edge의 페이지 번역 기능을 이용해 주세요."
   },
   en: {
     description: "Repository description",
@@ -95,19 +89,14 @@ const summaryLabels = {
     usage: "How to use",
     fallback: "No English README was found; showing the repository's default README.",
     loading: "Reading the README overview, features, and usage.",
-    translating: "Preparing the open-source Korean translation model. The model downloads on first use.",
-    translated: "English summary sections were auto-translated to Korean with an open-source MarianMT model.",
+    translating: "Preparing the browser's built-in Korean translator.",
+    translated: "English summary sections were translated to Korean with the browser's built-in translator.",
     translationError: "Korean translation failed. The English source summary is shown below. Switch to English or retry.",
     descriptionTranslating: "Translating to Korean…",
     descriptionTranslate: "한국어 번역",
     descriptionOriginal: "English original",
     descriptionRetry: "Retry Korean translation",
-    publicTranslationConsent: "Browser translation failed. The button below sends the public README summary to a LibreTranslate public server.",
-    publicTranslationButton: "Use public open-source translation",
-    publicTranslationLoading: "Translating with the public LibreTranslate server…",
-    publicTranslationDone: "Translated by a public LibreTranslate server.",
-    publicTranslationSent: "The public README summary was sent to the LibreTranslate server.",
-    publicTranslationError: "The public translation server is unavailable."
+    browserUnavailable: "This browser does not support the built-in Translator API. Use Chrome or Edge's page translation."
   }
 };
 
@@ -286,20 +275,24 @@ async function fetchReadmeFile(repository, language) {
   return readmeSummaries.get(cacheKey);
 }
 
-async function getKoreanTranslationPipeline() {
-  if (!translationPipelinePromise) {
-    translationPipelinePromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2")
-      .then(({ env, pipeline }) => {
-        env.allowLocalModels = false;
-        env.allowRemoteModels = true;
-        env.useBrowserCache = true;
-        return pipeline("translation", "Xenova/opus-mt-en-ko", { dtype: "q8" });
-      });
-    translationPipelinePromise.catch(() => {
-      translationPipelinePromise = undefined;
+function getBrowserTranslator() {
+  if (!browserTranslatorPromise) {
+    if (typeof globalThis.Translator?.create !== "function") {
+      return Promise.reject(new Error(summaryLabels.ko.browserUnavailable));
+    }
+    try {
+      browserTranslatorPromise = Promise.resolve(globalThis.Translator.create({
+        sourceLanguage: "en",
+        targetLanguage: "ko"
+      }));
+    } catch (error) {
+      browserTranslatorPromise = Promise.reject(error);
+    }
+    browserTranslatorPromise.catch(() => {
+      browserTranslatorPromise = undefined;
     });
   }
-  return translationPipelinePromise;
+  return browserTranslatorPromise;
 }
 
 async function translateSummaryToKorean(summary) {
@@ -314,7 +307,7 @@ async function translateSummaryToKorean(summary) {
   }
   if (!pendingTranslations.length) return { ...summary, fallback: false, translated: false };
 
-  const translated = await queueLocalTranslation(pendingTranslations.map((item) => item.text));
+  const translated = await queueBrowserTranslation(pendingTranslations.map((item) => item.text));
 
   const sections = summary.sections.map((section) => ({ ...section }));
   translated.forEach((translatedText, index) => {
@@ -327,82 +320,38 @@ async function translateSummaryToKorean(summary) {
   return { ...summary, sections, fallback: false, translated: true, translatedCount: pendingTranslations.length };
 }
 
-async function translateSummaryWithLibreTranslate(summary) {
-  const sections = [];
-  for (const section of summary.sections) {
-    const translatedSection = { ...section };
-    for (const field of ["label", "text"]) {
-      if (detectTextLanguage(translatedSection[field]) === "ko") continue;
-      const response = await fetch("https://translate.argosopentech.com/translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          q: translatedSection[field],
-          source: "en",
-          target: "ko",
-          format: "text"
-        })
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || `HTTP ${response.status}`);
-      }
-      if (typeof payload.translatedText !== "string" || detectTextLanguage(payload.translatedText) !== "ko") {
-        throw new Error("한국어 번역 결과를 확인할 수 없습니다.");
-      }
-      translatedSection[field] = payload.translatedText.trim();
-    }
-    sections.push(translatedSection);
-  }
-  return { ...summary, sections, fallback: false, translated: true, translationProvider: "LibreTranslate" };
-}
-
-function queueLocalTranslation(texts) {
-  const result = translationQueue.then(async () => {
+function queueBrowserTranslation(texts) {
+  const result = browserTranslationQueue.then(async () => {
     let translator;
     try {
-      translator = await getKoreanTranslationPipeline();
+      translator = await getBrowserTranslator();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`한국어 번역 모델을 불러오지 못했습니다: ${reason}`);
+      throw new Error(`브라우저 번역기를 사용할 수 없습니다: ${reason}`);
     }
 
-    let output;
-    try {
-      output = await translator(texts, { max_new_tokens: 160 });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`한국어 번역 모델 실행에 실패했습니다: ${reason}`);
-    }
-    if (!Array.isArray(output) || output.length !== texts.length) {
-      throw new Error("한국어 자동 번역 결과의 개수가 입력과 일치하지 않습니다.");
-    }
-    return output.map((item) => {
-      if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
-        throw new Error("한국어 자동 번역 결과가 비어 있습니다.");
+    const translatedTexts = [];
+    for (const text of texts) {
+      try {
+        const translated = await translator.translate(text);
+        if (typeof translated !== "string" || !translated.trim()) {
+          throw new Error("번역 결과가 비어 있습니다.");
+        }
+        translatedTexts.push(translated.trim());
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`브라우저 내장 번역 실행에 실패했습니다: ${reason}`);
       }
-      return item.translation_text.trim();
-    });
+    }
+    return translatedTexts;
   });
-  translationQueue = result.catch(() => []);
+  browserTranslationQueue = result.catch(() => []);
   return result;
 }
 
 function getDescriptionTranslationKey(repository, text) {
   const fullName = repository.full_name || `${repository.owner.login}/${repository.name}`;
   return `${fullName}:${text}`;
-}
-
-function observeRepositoryDescription(repository, description, button) {
-  description._repository = repository;
-  description._translationButton = button;
-  if (typeof IntersectionObserver !== "function") return;
-  descriptionObserver ||= new IntersectionObserver((entries) => {
-    const visibleEntries = entries.filter((entry) => entry.isIntersecting);
-    visibleEntries.forEach((entry) => descriptionObserver.unobserve(entry.target));
-    translateVisibleDescriptions(visibleEntries.map((entry) => entry.target));
-  }, { rootMargin: "160px 0px" });
-  descriptionObserver.observe(description);
 }
 
 async function translateVisibleDescriptions(descriptions) {
@@ -422,7 +371,7 @@ async function translateVisibleDescriptions(descriptions) {
       !descriptionTranslations.has(getDescriptionTranslationKey(description._repository, description.dataset.sourceText))
     ));
     if (newDescriptions.length) {
-      const batch = queueLocalTranslation(newDescriptions.map((description) => description.dataset.sourceText));
+      const batch = queueBrowserTranslation(newDescriptions.map((description) => description.dataset.sourceText));
       newDescriptions.forEach((description, index) => {
         const key = getDescriptionTranslationKey(description._repository, description.dataset.sourceText);
         const translation = batch.then((translations) => {
@@ -452,11 +401,12 @@ async function translateVisibleDescriptions(descriptions) {
       description._translationButton.textContent = summaryLabels.ko.descriptionOriginal;
       description._translationButton.setAttribute("aria-label", "영어 원문 보기");
     });
-  } catch {
+  } catch (error) {
     pending.forEach((description) => {
       description._translationButton.disabled = false;
       description._translationButton.textContent = summaryLabels.ko.descriptionRetry;
       description._translationButton.setAttribute("aria-label", "한국어 번역 다시 시도");
+      description._translationButton.title = error instanceof Error ? error.message : String(error);
     });
   } finally {
     pending.forEach((description) => {
@@ -468,9 +418,7 @@ async function translateVisibleDescriptions(descriptions) {
 function renderRepositorySummary(summary, language, notice, sectionsContainer) {
   notice.hidden = !summary.fallback && !summary.translated;
   notice.textContent = summary.translated
-    ? summary.translationProvider === "LibreTranslate"
-      ? summaryLabels[language].publicTranslationDone
-      : summaryLabels[language].translated
+    ? summaryLabels[language].translated
     : summary.fallback ? summaryLabels[language].fallback : "";
   sectionsContainer.replaceChildren();
   if (summary.fallback) {
@@ -484,6 +432,8 @@ function renderRepositorySummary(summary, language, notice, sectionsContainer) {
 }
 
 async function loadRepositorySummary(repository, button, summaryPanel, notice, sectionsContainer, language) {
+  const translatorPromise = language === "ko" ? getBrowserTranslator() : null;
+  translatorPromise?.catch(() => {});
   button.disabled = true;
   summaryPanel.querySelectorAll(".summary-language-button").forEach((item) => {
     item.disabled = true;
@@ -497,6 +447,7 @@ async function loadRepositorySummary(repository, button, summaryPanel, notice, s
   try {
     summary = await fetchReadmeFile(repository, language);
     if (language === "ko") {
+      await translatorPromise;
       if (summary.sections.some((section) => (
         detectTextLanguage(section.label) !== "ko" || detectTextLanguage(section.text) !== "ko"
       ))) {
@@ -518,29 +469,7 @@ async function loadRepositorySummary(repository, button, summaryPanel, notice, s
       const retryButton = makeElement("button", "summary-retry-button", "한국어 번역 다시 시도");
       retryButton.type = "button";
       retryButton.addEventListener("click", () => loadRepositorySummary(repository, button, summaryPanel, notice, sectionsContainer, language));
-      const publicTranslationButton = makeElement("button", "summary-retry-button", summaryLabels[language].publicTranslationButton);
-      publicTranslationButton.type = "button";
-      publicTranslationButton.addEventListener("click", async () => {
-        publicTranslationButton.disabled = true;
-        notice.textContent = summaryLabels[language].publicTranslationLoading;
-        try {
-          const translatedSummary = await translateSummaryWithLibreTranslate(summary);
-          renderRepositorySummary(translatedSummary, language, notice, sectionsContainer);
-          notice.append(document.createElement("br"), makeElement("span", "", summaryLabels[language].publicTranslationSent));
-        } catch (publicError) {
-          notice.textContent = `${summaryLabels[language].publicTranslationError} (${publicError.message})`;
-          publicTranslationButton.disabled = false;
-          notice.append(document.createElement("br"), publicTranslationButton);
-        }
-      });
-      notice.append(
-        document.createElement("br"),
-        retryButton,
-        document.createElement("br"),
-        makeElement("span", "", summaryLabels[language].publicTranslationConsent),
-        document.createElement("br"),
-        publicTranslationButton
-      );
+      notice.append(document.createElement("br"), retryButton);
       button.textContent = "핵심 내용 접기 / Collapse −";
       button.setAttribute("aria-expanded", "true");
     } else {
@@ -622,6 +551,7 @@ function createRepositoryCard(repository, index) {
         );
         return;
       }
+      getBrowserTranslator().catch(() => {});
       translateVisibleDescriptions([description]);
     });
   }
@@ -675,7 +605,6 @@ function createRepositoryCard(repository, index) {
   footer.append(forks, openLink);
 
   card.append(top, category, title, descriptionBlock, coreSummary, details, footer);
-  if (descriptionButton) observeRepositoryDescription(repository, description, descriptionButton);
   return card;
 }
 
