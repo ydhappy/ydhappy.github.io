@@ -187,10 +187,12 @@ button { color: inherit; }
 .media-heading h2 { margin: 0; font-size: clamp(24px, 3vw, 34px); line-height: 1.4; letter-spacing: -.06em; font-weight: 600; }
 .media-description { max-width: 720px; margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
 .media-mark { flex: none; width: 58px; height: 58px; display: grid; place-content: center; border: 1px solid #474252; border-radius: 50%; color: #c2b8ff; font: 600 13px/1.1 "SFMono-Regular", Consolas, monospace; text-align: center; }
-.media-categories { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 25px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
-.media-chip { padding: 8px 12px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; transition: color 150ms ease, border-color 150ms ease, background 150ms ease; }
-.media-chip:hover { color: var(--text); }
-.media-chip.is-active { border-color: #474252; background: #282430; color: #c2b8ff; }
+.media-category-menu { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.2fr); align-items: end; gap: 12px; margin-top: 25px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+.media-category-field { min-width: 0; display: grid; gap: 7px; }
+.media-category-field > span { color: var(--faint); font: 500 8px "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; }
+.media-category-field select { width: 100%; min-width: 0; height: 39px; padding: 0 30px 0 11px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); color: var(--text); font-size: 10px; cursor: pointer; }
+.media-category-field select:focus-visible { border-color: #7466aa; }
+.media-category-separator { align-self: center; padding-top: 18px; color: var(--violet); font-size: 18px; }
 .media-note { min-height: 38px; margin: 0; padding-block: 13px; color: var(--faint); font-size: 9px; line-height: 1.7; }
 .media-grid .repo-card { min-height: 222px; }
 .media-grid .repo-skeleton { height: 222px; }
@@ -266,6 +268,10 @@ button { color: inherit; }
   .results-bar > p { font-size: 10px; }
   .results-source { font-size: 7px; }
   .repo-grid { grid-template-columns: 1fr; gap: 9px; }
+  .media-category-menu { grid-template-columns: 1fr; gap: 9px; }
+  .media-category-separator { display: none; }
+  .media-category-field { gap: 5px; }
+  .media-category-field select { height: 42px; }
   .repo-card { min-height: 205px; padding: 16px; }
   .repo-name { margin-top: 10px; }
   .repo-skeleton { height: 205px; }

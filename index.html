@@ -124,12 +124,21 @@
           <span class="media-mark" aria-hidden="true">▶<br>AI</span>
         </div>
 
-        <div class="media-categories" role="group" aria-label="오픈소스 생성형 미디어 도구 유형">
-          <button class="media-chip is-active" type="button" data-query='"image generation"' data-description="Stable Diffusion 등 오픈소스 이미지 생성 모델과 도구입니다." aria-pressed="true">이미지 생성</button>
-          <button class="media-chip" type="button" data-query='"video generation"' data-description="텍스트나 프롬프트로 영상을 생성하는 오픈소스 모델과 프로젝트입니다." aria-pressed="false">영상 생성</button>
-          <button class="media-chip" type="button" data-query='"image to video"' data-description="이미지 한 장을 움직이는 영상으로 변환하는 프로젝트입니다." aria-pressed="false">이미지 애니메이션</button>
-          <button class="media-chip" type="button" data-query='"music visualizer"' data-description="음악의 박자와 소리에 반응하는 비주얼라이저 및 뮤직비디오 제작 도구입니다." aria-pressed="false">음악 시각화</button>
-          <button class="media-chip" type="button" data-query='"short video editor"' data-description="세로형 짧은 영상과 쇼츠 편집을 자동화하거나 지원하는 도구입니다." aria-pressed="false">쇼츠 편집</button>
+        <div class="media-category-menu" aria-label="오픈소스 생성형 미디어 도구 분류">
+          <label class="media-category-field">
+            <span>대분류</span>
+            <select id="media-major-category" aria-label="대분류"></select>
+          </label>
+          <span class="media-category-separator" aria-hidden="true">›</span>
+          <label class="media-category-field">
+            <span>중분류</span>
+            <select id="media-middle-category" aria-label="중분류"></select>
+          </label>
+          <span class="media-category-separator" aria-hidden="true">›</span>
+          <label class="media-category-field">
+            <span>소분류</span>
+            <select id="media-small-category" aria-label="소분류"></select>
+          </label>
         </div>
 
         <p class="media-note" id="media-note" aria-live="polite">이미지 생성 오픈소스 도구를 불러오는 중입니다...</p>

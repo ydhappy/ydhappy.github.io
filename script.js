@@ -17,7 +17,9 @@ const savingsLoadMoreButton = document.querySelector("#savings-load-more");
 const mediaGrid = document.querySelector("#media-grid");
 const mediaNote = document.querySelector("#media-note");
 const mediaSummary = document.querySelector("#media-summary");
-const mediaCategories = document.querySelector(".media-categories");
+const mediaMajorCategory = document.querySelector("#media-major-category");
+const mediaMiddleCategory = document.querySelector("#media-middle-category");
+const mediaSmallCategory = document.querySelector("#media-small-category");
 const mediaLoadMoreButton = document.querySelector("#media-load-more");
 
 let activeLanguage = "";
@@ -33,6 +35,72 @@ let mediaPage = 1;
 let mediaTotalCount = 0;
 let mediaRequestController;
 let activeMediaQuery = '"image generation"';
+let activeMediaDescription = "Stable Diffusion 등 오픈소스 이미지 생성 모델과 도구입니다.";
+const mediaCategoryTree = [
+  {
+    name: "이미지 제작",
+    categories: [
+      {
+        name: "이미지 생성",
+        items: [
+          { name: "텍스트로 이미지 만들기", query: '"text to image"', description: "텍스트 프롬프트로 이미지를 생성하는 오픈소스 모델과 도구입니다." },
+          { name: "Stable Diffusion", query: '"stable diffusion"', description: "Stable Diffusion 기반의 이미지 생성 모델과 프로젝트입니다." },
+          { name: "이미지 생성 UI·워크플로", query: '"image generation" UI OR workflow', description: "이미지 생성 과정을 구성하고 실행하는 UI와 워크플로 도구입니다." }
+        ]
+      },
+      {
+        name: "이미지 편집",
+        items: [
+          { name: "인페인팅·아웃페인팅", query: '"image inpainting" OR outpainting', description: "이미지 일부를 수정하거나 캔버스를 확장하는 도구입니다." },
+          { name: "이미지 업스케일", query: '"image upscaling" AI', description: "AI로 이미지 해상도와 세부 묘사를 높이는 도구입니다." }
+        ]
+      }
+    ]
+  },
+  {
+    name: "영상 제작",
+    categories: [
+      {
+        name: "텍스트·이미지로 영상 생성",
+        items: [
+          { name: "텍스트→영상", query: '"text to video" generation', description: "텍스트 프롬프트에서 영상을 생성하는 오픈소스 프로젝트입니다." },
+          { name: "이미지→영상", query: '"image to video" generation', description: "정지 이미지를 짧은 영상이나 움직이는 장면으로 만드는 도구입니다." }
+        ]
+      },
+      {
+        name: "영상 제작·편집",
+        items: [
+          { name: "생성형 영상 모델", query: '"video generation" model', description: "생성형 AI 영상 모델과 추론 구현을 찾아봅니다." },
+          { name: "영상 편집 자동화", query: '"AI video editing" open source', description: "AI를 활용해 영상 편집을 자동화하거나 보조하는 프로젝트입니다." }
+        ]
+      }
+    ]
+  },
+  {
+    name: "음악 기반 영상",
+    categories: [
+      {
+        name: "음악 시각화",
+        items: [
+          { name: "오디오 반응 비주얼라이저", query: '"audio visualizer" music', description: "음악의 주파수와 박자에 반응하는 오픈소스 비주얼라이저입니다." },
+          { name: "뮤직비디오 생성", query: '"music video generator" open source', description: "음악에 맞춘 비주얼과 뮤직비디오 제작을 돕는 프로젝트입니다." }
+        ]
+      }
+    ]
+  },
+  {
+    name: "쇼츠 제작",
+    categories: [
+      {
+        name: "짧은 영상 편집",
+        items: [
+          { name: "긴 영상에서 쇼츠 추출", query: '"long video to shorts" OR "AI clipping"', description: "긴 영상에서 주요 장면을 찾아 짧은 세로형 클립을 만드는 도구입니다." },
+          { name: "자막·세로형 편집", query: '"short form video" subtitles editor', description: "쇼츠용 자막, 화면 재구성, 세로형 편집을 지원합니다." }
+        ]
+      }
+    ]
+  }
+];
 const readmeSummaries = new Map();
 const repositoryFiles = new Map();
 const descriptionTranslations = new Map();
@@ -64,6 +132,10 @@ function getRepositoryType(repository) {
   const hasTopic = (...values) => values.some((value) => topics.includes(value));
 
   if (/\b(prompt|context|token)[ -]?(compression|optimization|optimisation)|\b(prompt cache|llm cost|cost tracking)\b/.test(text)) return "토큰·비용 최적화";
+  if (hasTopic("music-visualizer", "audio-visualizer") || /\b(music visuali[sz]er|audio visuali[sz]er)\b/.test(text)) return "음악 시각화";
+  if (hasTopic("text-to-video", "video-generation") || /\b(text.to.video|video generation|video diffusion|image.to.video)\b/.test(text)) return "AI 영상 생성";
+  if (hasTopic("image-generation", "text-to-image", "stable-diffusion") || /\b(image generation|text.to.image|stable diffusion)\b/.test(text)) return "AI 이미지 생성";
+  if (/\b(shorts editor|short.video editor|vertical video)\b/.test(text)) return "쇼츠 편집";
   if (hasTopic("music-visualizer", "audio-visualizer") || /\b(music visuali[sz]er|audio visuali[sz]er)\b/.test(text)) return "음악 시각화";
   if (hasTopic("text-to-video", "video-generation") || /\b(text.to.video|video generation|video diffusion|image.to.video)\b/.test(text)) return "AI 영상 생성";
   if (hasTopic("image-generation", "text-to-image", "stable-diffusion") || /\b(image generation|text.to.image|stable diffusion)\b/.test(text)) return "AI 이미지 생성";
@@ -805,8 +877,7 @@ async function loadMediaRepositories({ append = false } = {}) {
   const controller = new AbortController();
   mediaRequestController = controller;
   const requestedPage = append ? mediaPage + 1 : 1;
-  const activeCategory = mediaCategories.querySelector(".is-active");
-  mediaNote.textContent = activeCategory?.dataset.description || "";
+  mediaNote.textContent = activeMediaDescription;
   mediaGrid.setAttribute("aria-busy", "true");
   mediaLoadMoreButton.disabled = true;
 
@@ -884,6 +955,44 @@ async function loadMediaRepositories({ append = false } = {}) {
   }
 }
 
+function populateCategorySelect(select, items) {
+  select.replaceChildren(...items.map((item, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = item.name;
+    return option;
+  }));
+}
+
+function updateMediaCategoryOptions({ search = true, changedLevel = "major" } = {}) {
+  const major = mediaCategoryTree[Number(mediaMajorCategory.value)];
+  if (!major) return;
+  if (changedLevel === "major") {
+    populateCategorySelect(mediaMiddleCategory, major.categories);
+  }
+
+  const middle = major.categories[Number(mediaMiddleCategory.value)];
+  if (!middle) return;
+  if (changedLevel !== "small") {
+    populateCategorySelect(mediaSmallCategory, middle.items);
+  }
+
+  const small = middle.items[Number(mediaSmallCategory.value)];
+  if (!small) return;
+  activeMediaQuery = small.query;
+  activeMediaDescription = small.description;
+  mediaNote.textContent = small.description;
+  if (search) loadMediaRepositories();
+}
+
+function initializeMediaCategories() {
+  populateCategorySelect(mediaMajorCategory, mediaCategoryTree);
+  updateMediaCategoryOptions({ search: false, changedLevel: "major" });
+  mediaMajorCategory.addEventListener("change", () => updateMediaCategoryOptions({ changedLevel: "major" }));
+  mediaMiddleCategory.addEventListener("change", () => updateMediaCategoryOptions({ changedLevel: "middle" }));
+  mediaSmallCategory.addEventListener("change", () => updateMediaCategoryOptions({ changedLevel: "small" }));
+}
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   searchTerm = searchInput.value;
@@ -915,19 +1024,9 @@ savingsCategories.addEventListener("click", (event) => {
   loadSavingsRepositories();
 });
 savingsLoadMoreButton.addEventListener("click", () => loadSavingsRepositories({ append: true }));
-mediaCategories.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-query]");
-  if (!button) return;
-  const activeButton = mediaCategories.querySelector(".is-active");
-  activeButton?.classList.remove("is-active");
-  activeButton?.setAttribute("aria-pressed", "false");
-  button.classList.add("is-active");
-  button.setAttribute("aria-pressed", "true");
-  activeMediaQuery = button.dataset.query;
-  loadMediaRepositories();
-});
 mediaLoadMoreButton.addEventListener("click", () => loadMediaRepositories({ append: true }));
 
 loadRepositories();
 loadSavingsRepositories();
+initializeMediaCategories();
 loadMediaRepositories();
