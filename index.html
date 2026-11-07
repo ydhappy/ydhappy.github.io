@@ -124,21 +124,29 @@
           <span class="media-mark" aria-hidden="true">▶<br>AI</span>
         </div>
 
-        <div class="media-category-menu" aria-label="오픈소스 생성형 미디어 도구 분류">
-          <label class="media-category-field">
-            <span>대분류</span>
-            <select id="media-major-category" aria-label="대분류"></select>
-          </label>
-          <span class="media-category-separator" aria-hidden="true">›</span>
-          <label class="media-category-field">
-            <span>중분류</span>
-            <select id="media-middle-category" aria-label="중분류"></select>
-          </label>
-          <span class="media-category-separator" aria-hidden="true">›</span>
-          <label class="media-category-field">
-            <span>소분류</span>
-            <select id="media-small-category" aria-label="소분류"></select>
-          </label>
+        <div class="media-category-menu">
+          <button class="media-menu-toggle" id="media-menu-toggle" type="button" aria-expanded="false" aria-controls="media-category-panel">
+            <span class="media-menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span>카테고리</span>
+            <span class="media-menu-current" id="media-menu-current"></span>
+            <span class="media-menu-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="media-category-panel" id="media-category-panel" hidden>
+            <label class="media-category-field">
+              <span>대분류</span>
+              <select id="media-major-category" aria-label="대분류"></select>
+            </label>
+            <span class="media-category-separator" aria-hidden="true">›</span>
+            <label class="media-category-field">
+              <span>중분류</span>
+              <select id="media-middle-category" aria-label="중분류"></select>
+            </label>
+            <span class="media-category-separator" aria-hidden="true">›</span>
+            <label class="media-category-field">
+              <span>소분류</span>
+              <select id="media-small-category" aria-label="소분류"></select>
+            </label>
+          </div>
         </div>
 
         <p class="media-note" id="media-note" aria-live="polite">이미지 생성 오픈소스 도구를 불러오는 중입니다...</p>

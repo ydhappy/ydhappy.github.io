@@ -20,6 +20,9 @@ const mediaSummary = document.querySelector("#media-summary");
 const mediaMajorCategory = document.querySelector("#media-major-category");
 const mediaMiddleCategory = document.querySelector("#media-middle-category");
 const mediaSmallCategory = document.querySelector("#media-small-category");
+const mediaMenuToggle = document.querySelector("#media-menu-toggle");
+const mediaCategoryPanel = document.querySelector("#media-category-panel");
+const mediaMenuCurrent = document.querySelector("#media-menu-current");
 const mediaLoadMoreButton = document.querySelector("#media-load-more");
 
 let activeLanguage = "";
@@ -981,16 +984,38 @@ function updateMediaCategoryOptions({ search = true, changedLevel = "major" } = 
   if (!small) return;
   activeMediaQuery = small.query;
   activeMediaDescription = small.description;
+  mediaMenuCurrent.textContent = `${major.name} / ${middle.name} / ${small.name}`;
   mediaNote.textContent = small.description;
   if (search) loadMediaRepositories();
+  if (changedLevel === "small") {
+    mediaCategoryPanel.hidden = true;
+    mediaMenuToggle.setAttribute("aria-expanded", "false");
+  }
 }
 
 function initializeMediaCategories() {
   populateCategorySelect(mediaMajorCategory, mediaCategoryTree);
   updateMediaCategoryOptions({ search: false, changedLevel: "major" });
+  mediaCategoryPanel.hidden = true;
+  mediaMenuToggle.addEventListener("click", () => {
+    const isExpanded = mediaMenuToggle.getAttribute("aria-expanded") === "true";
+    mediaMenuToggle.setAttribute("aria-expanded", String(!isExpanded));
+    mediaCategoryPanel.hidden = isExpanded;
+  });
   mediaMajorCategory.addEventListener("change", () => updateMediaCategoryOptions({ changedLevel: "major" }));
   mediaMiddleCategory.addEventListener("change", () => updateMediaCategoryOptions({ changedLevel: "middle" }));
   mediaSmallCategory.addEventListener("change", () => updateMediaCategoryOptions({ changedLevel: "small" }));
+  document.addEventListener("click", (event) => {
+    if (mediaCategoryPanel.hidden || event.target.closest(".media-category-menu")) return;
+    mediaCategoryPanel.hidden = true;
+    mediaMenuToggle.setAttribute("aria-expanded", "false");
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || mediaCategoryPanel.hidden) return;
+    mediaCategoryPanel.hidden = true;
+    mediaMenuToggle.setAttribute("aria-expanded", "false");
+    mediaMenuToggle.focus();
+  });
 }
 
 form.addEventListener("submit", (event) => {
