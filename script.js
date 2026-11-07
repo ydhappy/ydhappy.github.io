@@ -72,7 +72,7 @@ const summaryLabels = {
     fallback: "한국어 README가 없어 저장소의 기본 README 원문을 표시합니다.",
     loading: "README에서 개요·기능·사용 방법을 확인하고 있습니다.",
     translating: "오픈소스 한국어 번역 모델을 준비하고 있습니다. 첫 사용 시 모델을 다운로드합니다.",
-    translated: "영어 README 요약을 오픈소스 MarianMT 모델로 한국어 자동 번역했습니다.",
+    translated: "영어로 작성된 요약 항목을 오픈소스 MarianMT 모델로 한국어 자동 번역했습니다.",
     translationError: "한국어 자동 번역에 실패했습니다. 아래는 영어 원문 요약입니다. English를 누르거나 다시 시도할 수 있습니다."
   },
   en: {
@@ -83,7 +83,7 @@ const summaryLabels = {
     fallback: "No English README was found; showing the repository's default README.",
     loading: "Reading the README overview, features, and usage.",
     translating: "Preparing the open-source Korean translation model. The model downloads on first use.",
-    translated: "English README summary auto-translated to Korean with an open-source MarianMT model.",
+    translated: "English summary sections were auto-translated to Korean with an open-source MarianMT model.",
     translationError: "Korean translation failed. The English source summary is shown below. Switch to English or retry."
   }
 };
@@ -116,7 +116,7 @@ function shortenText(text, maximum = 320) {
 function detectTextLanguage(text) {
   const hangulCount = (text.match(/[가-힣]/g) || []).length;
   const letterCount = (text.match(/[a-zA-Z가-힣]/g) || []).length;
-  return hangulCount / Math.max(letterCount, 1) > 0.02 ? "ko" : "en";
+  return hangulCount >= 3 && hangulCount / Math.max(letterCount, 1) >= 0.05 ? "ko" : "en";
 }
 
 function getSectionLabel(heading, language) {
@@ -163,10 +163,7 @@ function extractReadmeSummary(markdown, repository, language, sourceLanguage) {
   const labels = summaryLabels[language];
   const result = [];
   const description = repository.description?.trim();
-  if (description && detectTextLanguage(description) === sourceLanguage
-      && (language === sourceLanguage || (language === "ko" && sourceLanguage === "en"))) {
-    result.push({ label: labels.description, text: shortenText(description) });
-  }
+  if (description) result.push({ label: labels.description, text: shortenText(description) });
 
   const intro = parsed.find((section) => !section.heading)?.text
     ? parsed.find((section) => !section.heading)
@@ -281,26 +278,43 @@ async function getKoreanTranslationPipeline() {
 }
 
 async function translateSummaryToKorean(summary) {
+  const pendingTranslations = [];
+  for (const [sectionIndex, section] of summary.sections.entries()) {
+    if (detectTextLanguage(section.label) !== "ko") {
+      pendingTranslations.push({ sectionIndex, field: "label", text: section.label });
+    }
+    if (detectTextLanguage(section.text) !== "ko") {
+      pendingTranslations.push({ sectionIndex, field: "text", text: section.text });
+    }
+  }
+  if (!pendingTranslations.length) return { ...summary, fallback: false, translated: false };
+
   let translated;
   try {
     const translator = await getKoreanTranslationPipeline();
-    translated = await translator(summary.sections.map((section) => section.text), {
+    translated = await translator(pendingTranslations.map((item) => item.text), {
       max_new_tokens: 160
     });
   } catch {
-    throw new Error("한국어 번역 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도하거나 English를 선택해 원문을 확인해 주세요.");
+    throw new Error("한국어 번역 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.");
   }
-  if (!Array.isArray(translated) || translated.length !== summary.sections.length) {
+  if (!Array.isArray(translated) || translated.length !== pendingTranslations.length) {
     throw new Error("한국어 자동 번역 결과를 확인할 수 없습니다. 다시 시도해 주세요.");
   }
 
-  const sections = translated.map((item, index) => {
+  const sections = summary.sections.map((section) => ({ ...section }));
+  translated.forEach((item, index) => {
     if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
       throw new Error("한국어 자동 번역 결과가 비어 있습니다. 다시 시도해 주세요.");
     }
-    return { ...summary.sections[index], text: item.translation_text.trim() };
+    const target = pendingTranslations[index];
+    const translatedText = item.translation_text.trim();
+    if (target.field === "text" && detectTextLanguage(translatedText) !== "ko") {
+      throw new Error("일부 요약 항목이 한국어로 번역되지 않았습니다. 다시 시도해 주세요.");
+    }
+    sections[target.sectionIndex][target.field] = translatedText;
   });
-  return { ...summary, sections, fallback: false, translated: true };
+  return { ...summary, sections, fallback: false, translated: true, translatedCount: pendingTranslations.length };
 }
 
 function renderRepositorySummary(summary, language, notice, sectionsContainer) {
@@ -332,8 +346,12 @@ async function loadRepositorySummary(repository, button, summaryPanel, notice, s
   let summary;
   try {
     summary = await fetchReadmeFile(repository, language);
-    if (language === "ko" && summary.sourceLanguage === "en") {
-      notice.textContent = summaryLabels.ko.translating;
+    if (language === "ko") {
+      if (summary.sections.some((section) => (
+        detectTextLanguage(section.label) !== "ko" || detectTextLanguage(section.text) !== "ko"
+      ))) {
+        notice.textContent = summaryLabels.ko.translating;
+      }
       summary = await translateSummaryToKorean(summary);
     }
     renderRepositorySummary(summary, language, notice, sectionsContainer);
@@ -342,7 +360,9 @@ async function loadRepositorySummary(repository, button, summaryPanel, notice, s
     button.setAttribute("aria-expanded", "true");
   } catch (error) {
     notice.hidden = false;
-    if (language === "ko" && summary?.sourceLanguage === "en") {
+    if (language === "ko" && summary?.sections.some((section) => (
+      detectTextLanguage(section.label) !== "ko" || detectTextLanguage(section.text) !== "ko"
+    ))) {
       renderRepositorySummary({ ...summary, fallback: true }, language, notice, sectionsContainer);
       notice.textContent = summaryLabels.ko.translationError;
       const retryButton = makeElement("button", "summary-retry-button", "한국어 번역 다시 시도");
