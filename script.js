@@ -127,7 +127,11 @@ function shortenText(text, maximum = 320) {
 function detectTextLanguage(text) {
   const hangulCount = (text.match(/[가-힣]/g) || []).length;
   const letterCount = (text.match(/[a-zA-Z가-힣]/g) || []).length;
-  return hangulCount >= 3 && hangulCount / Math.max(letterCount, 1) >= 0.05 ? "ko" : "en";
+  return hangulCount > 0 && hangulCount / Math.max(letterCount, 1) >= 0.05 ? "ko" : "en";
+}
+
+function containsKoreanText(text) {
+  return /[가-힣]/.test(text);
 }
 
 function getSectionLabel(heading, language) {
@@ -305,7 +309,7 @@ async function translateSummaryToKorean(summary) {
   const sections = summary.sections.map((section) => ({ ...section }));
   translated.forEach((translatedText, index) => {
     const target = pendingTranslations[index];
-    if (target.field === "text" && detectTextLanguage(translatedText) !== "ko") {
+    if (target.field === "text" && !containsKoreanText(translatedText)) {
       throw new Error("일부 요약 항목이 한국어로 번역되지 않았습니다. 다시 시도해 주세요.");
     }
     sections[target.sectionIndex][target.field] = translatedText;
@@ -376,7 +380,7 @@ async function translateVisibleDescriptions(descriptions) {
         const key = getDescriptionTranslationKey(description._repository, description.dataset.sourceText);
         const translation = batch.then((translations) => {
           const translated = translations[index];
-          if (detectTextLanguage(translated) !== "ko") {
+          if (!containsKoreanText(translated)) {
             throw new Error("저장소 설명이 한국어로 번역되지 않았습니다.");
           }
           return translated;
@@ -461,7 +465,7 @@ async function loadRepositorySummary(repository, button, summaryPanel, notice, s
       detectTextLanguage(section.label) !== "ko" || detectTextLanguage(section.text) !== "ko"
     ))) {
       renderRepositorySummary({ ...summary, fallback: true }, language, notice, sectionsContainer);
-      notice.textContent = summaryLabels.ko.translationError;
+      notice.textContent = `${summaryLabels.ko.translationError} (${error.message})`;
       const retryButton = makeElement("button", "summary-retry-button", "한국어 번역 다시 시도");
       retryButton.type = "button";
       retryButton.addEventListener("click", () => loadRepositorySummary(repository, button, summaryPanel, notice, sectionsContainer, language));
