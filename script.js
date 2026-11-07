@@ -26,6 +26,7 @@ let savingsRequestController;
 let activeSavingsQuery = '"context compression"';
 const readmeSummaries = new Map();
 const repositoryFiles = new Map();
+let translationPipelinePromise;
 
 const numberFormat = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "short", day: "numeric" });
@@ -69,7 +70,10 @@ const summaryLabels = {
     features: "주요 기능",
     usage: "사용 방법",
     fallback: "한국어 README가 없어 저장소의 기본 README 원문을 표시합니다.",
-    loading: "README에서 개요·기능·사용 방법을 확인하고 있습니다."
+    loading: "README에서 개요·기능·사용 방법을 확인하고 있습니다.",
+    translating: "오픈소스 한국어 번역 모델을 준비하고 있습니다. 첫 사용 시 모델을 다운로드합니다.",
+    translated: "영어 README 요약을 오픈소스 MarianMT 모델로 한국어 자동 번역했습니다.",
+    translationError: "한국어 자동 번역에 실패했습니다. 아래는 영어 원문 요약입니다. English를 누르거나 다시 시도할 수 있습니다."
   },
   en: {
     description: "Repository description",
@@ -77,7 +81,10 @@ const summaryLabels = {
     features: "Key features",
     usage: "How to use",
     fallback: "No English README was found; showing the repository's default README.",
-    loading: "Reading the README overview, features, and usage."
+    loading: "Reading the README overview, features, and usage.",
+    translating: "Preparing the open-source Korean translation model. The model downloads on first use.",
+    translated: "English README summary auto-translated to Korean with an open-source MarianMT model.",
+    translationError: "Korean translation failed. The English source summary is shown below. Switch to English or retry."
   }
 };
 
@@ -121,7 +128,7 @@ function getSectionLabel(heading, language) {
   return language === "en" ? heading : `README: ${heading}`;
 }
 
-function extractReadmeSummary(markdown, repository, language) {
+function extractReadmeSummary(markdown, repository, language, sourceLanguage) {
   const content = markdown
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/```[\s\S]*?```/g, "")
@@ -156,7 +163,8 @@ function extractReadmeSummary(markdown, repository, language) {
   const labels = summaryLabels[language];
   const result = [];
   const description = repository.description?.trim();
-  if (description && detectTextLanguage(description) === language) {
+  if (description && detectTextLanguage(description) === sourceLanguage
+      && (language === sourceLanguage || (language === "ko" && sourceLanguage === "en"))) {
     result.push({ label: labels.description, text: shortenText(description) });
   }
 
@@ -247,7 +255,7 @@ async function fetchReadmeFile(repository, language) {
       const sourceLanguage = localized ? language : detectTextLanguage(markdown);
       const fallback = !localized && sourceLanguage !== language;
       return {
-        sections: extractReadmeSummary(markdown, repository, language),
+        sections: extractReadmeSummary(markdown, repository, language, sourceLanguage),
         sourceLanguage,
         fallback
       };
@@ -258,9 +266,48 @@ async function fetchReadmeFile(repository, language) {
   return readmeSummaries.get(cacheKey);
 }
 
+async function getKoreanTranslationPipeline() {
+  if (!translationPipelinePromise) {
+    translationPipelinePromise = import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/+esm")
+      .then(({ env, pipeline }) => {
+        env.useBrowserCache = true;
+        return pipeline("translation", "Xenova/opus-mt-en-ko", { dtype: "q8" });
+      });
+    translationPipelinePromise.catch(() => {
+      translationPipelinePromise = undefined;
+    });
+  }
+  return translationPipelinePromise;
+}
+
+async function translateSummaryToKorean(summary) {
+  let translated;
+  try {
+    const translator = await getKoreanTranslationPipeline();
+    translated = await translator(summary.sections.map((section) => section.text), {
+      max_new_tokens: 160
+    });
+  } catch {
+    throw new Error("한국어 번역 모델을 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도하거나 English를 선택해 원문을 확인해 주세요.");
+  }
+  if (!Array.isArray(translated) || translated.length !== summary.sections.length) {
+    throw new Error("한국어 자동 번역 결과를 확인할 수 없습니다. 다시 시도해 주세요.");
+  }
+
+  const sections = translated.map((item, index) => {
+    if (typeof item.translation_text !== "string" || !item.translation_text.trim()) {
+      throw new Error("한국어 자동 번역 결과가 비어 있습니다. 다시 시도해 주세요.");
+    }
+    return { ...summary.sections[index], text: item.translation_text.trim() };
+  });
+  return { ...summary, sections, fallback: false, translated: true };
+}
+
 function renderRepositorySummary(summary, language, notice, sectionsContainer) {
-  notice.hidden = !summary.fallback;
-  notice.textContent = summary.fallback ? summaryLabels[language].fallback : "";
+  notice.hidden = !summary.fallback && !summary.translated;
+  notice.textContent = summary.translated
+    ? summaryLabels[language].translated
+    : summary.fallback ? summaryLabels[language].fallback : "";
   sectionsContainer.replaceChildren();
   if (summary.fallback) {
     notice.dataset.sourceLanguage = summary.sourceLanguage;
@@ -274,25 +321,47 @@ function renderRepositorySummary(summary, language, notice, sectionsContainer) {
 
 async function loadRepositorySummary(repository, button, summaryPanel, notice, sectionsContainer, language) {
   button.disabled = true;
+  summaryPanel.querySelectorAll(".summary-language-button").forEach((item) => {
+    item.disabled = true;
+  });
   button.textContent = language === "ko" ? "README 읽는 중…" : "Reading README…";
   notice.hidden = false;
   notice.textContent = summaryLabels[language].loading;
   sectionsContainer.replaceChildren();
 
+  let summary;
   try {
-    const summary = await fetchReadmeFile(repository, language);
+    summary = await fetchReadmeFile(repository, language);
+    if (language === "ko" && summary.sourceLanguage === "en") {
+      notice.textContent = summaryLabels.ko.translating;
+      summary = await translateSummaryToKorean(summary);
+    }
     renderRepositorySummary(summary, language, notice, sectionsContainer);
     summaryPanel.dataset.language = language;
     button.textContent = "핵심 내용 접기 / Collapse −";
     button.setAttribute("aria-expanded", "true");
   } catch (error) {
     notice.hidden = false;
-    notice.textContent = error.message;
-    button.textContent = "다시 시도 / Retry ↻";
-    button.setAttribute("aria-expanded", "false");
-    summaryPanel.hidden = true;
+    if (language === "ko" && summary?.sourceLanguage === "en") {
+      renderRepositorySummary({ ...summary, fallback: true }, language, notice, sectionsContainer);
+      notice.textContent = summaryLabels.ko.translationError;
+      const retryButton = makeElement("button", "summary-retry-button", "한국어 번역 다시 시도");
+      retryButton.type = "button";
+      retryButton.addEventListener("click", () => loadRepositorySummary(repository, button, summaryPanel, notice, sectionsContainer, language));
+      notice.append(document.createElement("br"), retryButton);
+      button.textContent = "핵심 내용 접기 / Collapse −";
+      button.setAttribute("aria-expanded", "true");
+    } else {
+      notice.textContent = error.message;
+      button.textContent = "다시 시도 / Retry ↻";
+      button.setAttribute("aria-expanded", "false");
+      summaryPanel.hidden = true;
+    }
   } finally {
     button.disabled = false;
+    summaryPanel.querySelectorAll(".summary-language-button").forEach((item) => {
+      item.disabled = false;
+    });
   }
 }
 
